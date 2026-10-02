@@ -29,10 +29,22 @@ namespace ForeverLauncher
         public const string Portal = "auth.gpon.com.co";   // el certificado del servidor esta emitido para este nombre: NO una IP
         public const string ConfigName = "BetaSuspendedTest.wtf";
         public const string ExeName = "WowB.exe";
-        public const string ExpectedVersion = "1.60.1.69977";   // build con el que se MIDIERON las claves
-        public static readonly string[] SupportedVersions = { "1.60.1.69913", "1.60.1.69977" };
+        public const string ExpectedVersion = "1.60.1.70009";   // build con el que se MIDIERON las claves
+        public static readonly string[] SupportedVersions = { "1.60.1.69913", "1.60.1.69977", "1.60.1.70009" };
+        // Builds que el servidor anuncia en status.json (clientBuilds): se suman a los de arriba sin sacar launcher nuevo.
+        public static volatile string[] FeedVersions = new string[0];
+        public static bool IsSupported(string version)
+        {
+            return Array.IndexOf(SupportedVersions, version) >= 0 || Array.IndexOf(FeedVersions, version) >= 0;
+        }
+        public static string SupportedList()
+        {
+            var all = new System.Collections.Generic.List<string>(SupportedVersions);
+            foreach (var v in FeedVersions) if (!all.Contains(v)) all.Add(v);
+            return string.Join(", ", all.ToArray());
+        }
 
-        // Las 12 claves del almacen, medidas el 2026-09-20 y reverificadas en 69977 el 2026-09-23.
+        // Las 12 claves del almacen, medidas el 2026-09-20 y reverificadas en 69977 (2026-09-23) y 70009 (2026-09-25).
         // Entrada = u32 id + 32 B clave + flag + 7F 00 00.
         static readonly string[] KnownKeys = {
             "9B0671C815DFF513BFD4A2B26AE1F84EC9106841B2FB620DB65F6ADE7C21AD06", // 1  ancla de busqueda (nunca se toca)
@@ -79,8 +91,8 @@ namespace ForeverLauncher
             string exe = Path.Combine(dir, ExeName);
             if (!File.Exists(exe)) return new Msg(MsgKind.Warn, "dir.noexe");
             version = FileVersionInfo.GetVersionInfo(exe).FileVersion;
-            if (Array.IndexOf(SupportedVersions, version) < 0)
-                return new Msg(MsgKind.Warn, "dir.badbuild", version, string.Join(", ", SupportedVersions));
+            if (!IsSupported(version))
+                return new Msg(MsgKind.Warn, "dir.badbuild", version, SupportedList());
             return null;
         }
 
@@ -139,6 +151,9 @@ namespace ForeverLauncher
                 changed = true;
             }
             if (!lines.Any(l => l.StartsWith("SET textLocale "))) { lines.Add("SET textLocale \"enUS\""); changed = true; }
+            // Con el FoV activo hace falta que el cliente ejecute el validador de cameraFov al arrancar (asi su pagina de
+            // codigo queda descifrada y FovPatcher la encuentra). Basta con que el CVar este en el .wtf; 90 es el valor normal.
+            if (Settings.FovEnabled && !lines.Any(l => l.StartsWith("SET cameraFov "))) { lines.Add("SET cameraFov \"90\""); changed = true; }
             if (changed)
             {
                 File.WriteAllLines(wtf, lines);
@@ -215,6 +230,15 @@ namespace ForeverLauncher
             Log("PID " + pid);
             Phase(PatchPhase.WaitingLogin);
 
+            // Campo de vision (Fov.cs): hilo propio, solo escribe en heap; obedece a la casilla de Opciones en caliente.
+            var fov = new FovPatcher(pid, Log, Say);
+            fov.Start();
+            try { StoreLoop(pid); }
+            finally { fov.Stop(); }
+        }
+
+        void StoreLoop(int pid)
+        {
             long store = 0;            // direccion del almacen vivo (0 = ninguno)
             bool everPatched = false, waitingSaid = false;
             while (!stopRequested)

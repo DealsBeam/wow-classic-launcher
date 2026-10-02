@@ -33,9 +33,13 @@ namespace ForeverLauncher
         public long LoginMs = -1;
         public bool FeedOk, FeedFresh, FeedLoginUp, FeedWorldUp, Maintenance;
         public FeedEntry Root = new FeedEntry(null);   // "message" / "message_en"
-        public string LatestLauncher, LauncherUrl;
+        public string LatestLauncher, LauncherUrl, MinLauncher;
+        public string DiscordUrl;   // invitacion al Discord del servidor (boton de la barra superior)   // MinLauncher: por debajo, el boton JUGAR pasa a ACTUALIZAR
         public List<FeedEntry> News = new List<FeedEntry>();
+        public List<FeedEntry> PatchNotes = new List<FeedEntry>();   // mismo formato que News
         public List<FeedEntry> Links = new List<FeedEntry>();
+        public List<string> ClientBuilds = new List<string>();   // builds admitidos anunciados por el servidor
+        public List<AddonInfo> Addons = new List<AddonInfo>();   // addons del servidor (Addons.cs)
     }
 
     public static class StatusClient
@@ -100,19 +104,42 @@ namespace ForeverLauncher
                 }
                 s.Maintenance = Bool(root, "maintenance");
                 s.Root = new FeedEntry(root);
+                string discord = Str(root, "discord");
+                if (discord != null && System.Text.RegularExpressions.Regex.IsMatch(discord, @"^https://(discord\.gg|discord\.com/invite)/[A-Za-z0-9-]{2,32}$"))
+                    s.DiscordUrl = discord;
 
                 var launcher = root.ContainsKey("launcher") ? root["launcher"] as Dictionary<string, object> : null;
-                if (launcher != null) { s.LatestLauncher = Str(launcher, "version"); s.LauncherUrl = Str(launcher, "url"); }
+                if (launcher != null) { s.LatestLauncher = Str(launcher, "version"); s.LauncherUrl = Str(launcher, "url"); s.MinLauncher = Str(launcher, "min"); }
 
                 foreach (var o in List(root, "news"))
                 {
                     var d = o as Dictionary<string, object>;
                     if (d != null) s.News.Add(new FeedEntry(d));
                 }
+                foreach (var o in List(root, "patchNotes"))
+                {
+                    var d = o as Dictionary<string, object>;
+                    if (d != null) s.PatchNotes.Add(new FeedEntry(d));
+                }
                 foreach (var o in List(root, "links"))
                 {
                     var d = o as Dictionary<string, object>;
                     if (d != null && Str(d, "label") != null && Str(d, "url") != null) s.Links.Add(new FeedEntry(d));
+                }
+                // Builds del cliente que el servidor ya admite: un build nuevo de Blizzard con las MISMAS claves no
+                // necesita un launcher nuevo (solo se aceptan builds de Forever 1.60.x.xxxxx; las claves siguen en el exe).
+                foreach (var o in List(root, "clientBuilds"))
+                {
+                    var v = o as string;
+                    if (v != null && System.Text.RegularExpressions.Regex.IsMatch(v, @"^1\.60\.\d+\.\d{5}$")) s.ClientBuilds.Add(v);
+                }
+                if (s.ClientBuilds.Count > 0) Patcher.FeedVersions = s.ClientBuilds.ToArray();
+                foreach (var o in List(root, "addons"))
+                {
+                    var d = o as Dictionary<string, object>;
+                    if (d == null) continue;
+                    var a = new AddonInfo { Name = Str(d, "name"), Version = Str(d, "version"), Url = Str(d, "url"), Sha256 = Str(d, "sha256") };
+                    if (AddonInstaller.Valid(a)) s.Addons.Add(a);
                 }
             }
             catch { }
